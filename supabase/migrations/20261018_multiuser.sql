@@ -135,3 +135,193 @@ grant select on public.inventory, public.stock_movements,
 grant insert on public.stock_requests to authenticated;
 grant update (status, reviewed_by, reviewed_at, review_note)
       on public.stock_requests to authenticated;
+
+-- ============================================================
+-- RPC SECURITY DEFINER — satu-satunya jalur tulis stok
+-- ============================================================
+-- Catatan: overload lama dari schema.sql (adjust_stock tanpa p_store,
+-- transfer_stock dengan from_loc/to_loc TEXT) sudah DIHAPUS — keduanya
+-- bukan SECURITY DEFINER dan tanpa cek role.
+
+create or replace function public.adjust_stock(
+  p_id uuid, delta int, mtype text, reason text, p_store uuid
+) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  v_role text := public.app_role();
+  v_uid  uuid := auth.uid();
+  v_cur  int;
+begin
+  if v_uid is null then
+    raise exception 'belum login';
+  end if;
+  if not exists (select 1 from profiles where user_id = v_uid and is_active) then
+    raise exception 'profil tidak aktif';
+  end if;
+
+  if v_role = 'kasir' then
+    if p_store is distinct from public.app_store() then
+      raise exception 'kasir hanya boleh di cabangnya sendiri';
+    end if;
+    if mtype not in ('IN','OUT') then
+      raise exception 'kasir hanya boleh IN/OUT; koreksi harus lewat permintaan';
+    end if;
+  elsif v_role <> 'owner' then
+    raise exception 'role tidak dikenal';
+  end if;
+
+  select current_qty into v_cur from inventory
+   where product_id = p_id and store_id = p_store;
+
+  if v_cur is null then
+    insert into inventory (product_id, store_id, current_qty)
+    values (p_id, p_store, 0);
+    v_cur := 0;
+  end if;
+
+  if v_cur + delta < 0 then
+    raise exception 'stok tidak boleh minus (sisa %)', v_cur;
+  end if;
+
+  update inventory set current_qty = current_qty + delta
+   where product_id = p_id and store_id = p_store;
+
+  insert into stock_movements
+    (product_id, movement_type, qty_change, reason, store_id, created_by)
+  values (p_id, mtype, delta, reason, p_store, v_uid);
+end;
+$$;
+
+create or replace function public.transfer_stock(
+  p_id uuid, from_loc uuid, to_loc uuid, qty int, reason text
+) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  v_uid uuid := auth.uid();
+  v_cur int;
+begin
+  if v_uid is null or not public.is_owner() then
+    raise exception 'hanya owner yang boleh transfer';
+  end if;
+
+  select current_qty into v_cur from inventory
+   where product_id = p_id and store_id = from_loc for update;
+  if v_cur is null or v_cur < qty then
+    raise exception 'stok sumber tidak mencukupi';
+  end if;
+
+  update inventory set current_qty = current_qty - qty
+   where product_id = p_id and store_id = from_loc;
+
+  insert into inventory (product_id, store_id, current_qty)
+  values (p_id, to_loc, qty)
+  on conflict (product_id, store_id)
+  do update set current_qty = inventory.current_qty + excluded.current_qty;
+
+  insert into stock_movements (product_id, movement_type, qty_change, reason, store_id, created_by)
+  values (p_id, 'OUT', -qty, coalesce(reason,'transfer ke toko lain'), from_loc, v_uid);
+  insert into stock_movements (product_id, movement_type, qty_change, reason, store_id, created_by)
+  values (p_id, 'IN',  qty, coalesce(reason,'transfer dari toko lain'), to_loc, v_uid);
+end;
+$$;
+
+create or replace function public.request_stock_change(
+  p_id uuid, delta int, p_type text, reason text, p_store uuid
+) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare
+  v_uid uuid := auth.uid();
+  v_id  uuid;
+begin
+  if v_uid is null then
+    raise exception 'belum login';
+  end if;
+  if not public.is_owner()
+     and (public.app_role() <> 'kasir' or p_store is distinct from public.app_store()) then
+    raise exception 'kasir hanya boleh mengajukan untuk cabangnya sendiri';
+  end if;
+
+  insert into stock_requests
+    (product_id, store_id, request_type, requested_delta, reason, requested_by)
+  values (p_id, p_store, p_type, delta, reason, v_uid)
+  returning id into v_id;
+  return v_id;
+end;
+$$;
+
+create or replace function public.review_stock_request(
+  req_id uuid, approve boolean, note text default null
+) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  r stock_requests%rowtype;
+begin
+  if not public.is_owner() then
+    raise exception 'hanya owner yang boleh menyetujui/menolak';
+  end if;
+
+  select * into r from stock_requests where id = req_id for update;
+  if not found then
+    raise exception 'permintaan tidak ditemukan';
+  end if;
+  if r.status <> 'pending' then
+    return;
+  end if;
+
+  if approve then
+    perform public.adjust_stock(r.product_id, r.requested_delta, 'ADJUSTMENT', r.reason, r.store_id);
+    update stock_requests set status='approved', reviewed_by=auth.uid(),
+           reviewed_at=now(), review_note=note where id = req_id;
+  else
+    update stock_requests set status='rejected', reviewed_by=auth.uid(),
+           reviewed_at=now(), review_note=note where id = req_id;
+  end if;
+end;
+$$;
+
+create or replace function public.submit_opname_batch(
+  items jsonb, p_store uuid
+) returns uuid
+language plpgsql security definer set search_path = public as $$
+declare
+  v_role text := public.app_role();
+  v_uid  uuid := auth.uid();
+  v_batch uuid := gen_random_uuid();
+  it jsonb;
+  v_sys int;
+  v_counted int;
+  v_delta int;
+begin
+  if v_uid is null then
+    raise exception 'belum login';
+  end if;
+  if v_role = 'kasir' and p_store is distinct from public.app_store() then
+    raise exception 'kasir hanya boleh di cabangnya sendiri';
+  end if;
+  if v_role not in ('owner','kasir') then
+    raise exception 'role tidak dikenal';
+  end if;
+
+  for it in select * from jsonb_array_elements(items) loop
+    v_counted := (it->>'counted')::int;
+    select current_qty into v_sys from inventory
+     where product_id = (it->>'id')::uuid and store_id = p_store;
+    v_sys := coalesce(v_sys, 0);
+    v_delta := v_counted - v_sys;
+    if v_delta = 0 then
+      continue;
+    end if;
+
+    if v_role = 'owner' then
+      perform public.adjust_stock((it->>'id')::uuid, v_delta, 'ADJUSTMENT',
+                                  'opname', p_store);
+    else
+      insert into stock_requests
+        (product_id, store_id, request_type, requested_delta, reason, requested_by)
+      values ((it->>'id')::uuid, p_store, 'OPNAME', v_delta, 'opname', v_uid);
+    end if;
+  end loop;
+
+  return v_batch;
+end;
+$$;
