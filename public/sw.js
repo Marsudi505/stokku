@@ -1,6 +1,6 @@
 /* STOKKU service worker v1 — app-shell offline, data tetap network-first */
 const CACHE = "stokku-v1";
-const SHELL = ["/login", "/dashboard", "/manifest.webmanifest", "/icons/icon-192.png"];
+const SHELL = ["/login", "/dashboard", "/manifest.webmanifest", "/icon-192x192.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
