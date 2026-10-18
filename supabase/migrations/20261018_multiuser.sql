@@ -325,3 +325,15 @@ begin
   return v_batch;
 end;
 $$;
+
+-- ============================================================
+-- SEEDER OWNER (sudah dijalankan; email auth: yowes6652@gmail.com)
+-- ============================================================
+insert into public.stores (name, code) values ('Toko Utama','UTAMA')
+on conflict (code) do nothing;
+
+insert into public.profiles (user_id, username, full_name, role, store_id, is_active)
+select u.id, 'owner', 'Owner', 'owner', s.id, true
+  from auth.users u, public.stores s
+ where u.email = 'yowes6652@gmail.com' and s.code='UTAMA'
+on conflict (user_id) do nothing;
