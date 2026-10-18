@@ -24,7 +24,7 @@ export default function ProductSearch({ initial }: { initial: string }) {
   }, [value]);
 
   return (
-    <div className="sticky top-[54px] z-10 -mx-4 bg-slate-50 px-4 pt-2 pb-2">
+    <div className="sticky top-[98px] z-10 -mx-4 bg-slate-50 px-4 pt-2 pb-2">
       <label className="flex h-12 items-center gap-2 rounded-lg border-2 border-slate-900 bg-white px-4 shadow-[2px_2px_0_0_#0f172a]">
         <Search size={18} className="shrink-0 text-slate-900" />
         <input

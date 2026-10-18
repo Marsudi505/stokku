@@ -7,7 +7,7 @@ export default function ProductCard({ p }: { p: ProductRow }) {
   return (
     <Link
       href={`/produk/${p.id}`}
-      className="flex items-center justify-between gap-3 rounded-xl border-2 border-slate-900 bg-white p-4 text-slate-900 shadow-[4px_4px_0_0_#0f172a]"
+      className="flex items-center justify-between gap-3 rounded-xl border-2 border-slate-900 bg-white p-4 text-slate-900 shadow-[4px_4px_0_0_#0f172a] transition-transform active:scale-[0.98]"
     >
       <div className="min-w-0">
         <p className="truncate font-bold">{p.name}</p>

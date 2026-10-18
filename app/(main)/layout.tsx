@@ -1,5 +1,6 @@
 import AppHeader from "@/components/AppHeader";
 import BottomNav from "@/components/BottomNav";
+import Ticker from "@/components/Ticker";
 import { createServerSupabase } from "@/lib/supabase/server";
 
 export default async function MainLayout({ children }: { children: React.ReactNode }) {
@@ -16,6 +17,7 @@ export default async function MainLayout({ children }: { children: React.ReactNo
   return (
     <div className="mx-auto min-h-dvh max-w-md bg-slate-50 pb-28 text-slate-900">
       <AppHeader />
+      <Ticker />
       {children}
       <BottomNav criticalCount={critical} />
     </div>
