@@ -61,7 +61,10 @@ export async function requireAuth(): Promise<Profile> {
   return getProfile();
 }
 
-export async function getRole(): Promise<Role> {
-  const profile = await getProfile();
-  return profile.role ?? "kasir";
+export async function getRole(): Promise<Role | null> {
+  return (await getProfile()).role;
+}
+
+export async function requireOwner(): Promise<void> {
+  if ((await getRole()) !== "owner") redirect("/produk");
 }
