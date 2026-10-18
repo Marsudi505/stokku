@@ -43,6 +43,7 @@ export default async function DetailPage({ params }: { params: Promise<{ id: str
   const movements = validMovements(rawMov ?? []);
 
   const buckets = Array.from({ length: 14 }, (_, i) => {
+    // eslint-disable-next-line react-hooks/purity
     const day = new Date(Date.now() - (13 - i) * DAY);
     const key = day.toISOString().slice(0, 10);
     const net = movements
