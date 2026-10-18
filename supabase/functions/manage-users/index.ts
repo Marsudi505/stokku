@@ -13,7 +13,11 @@ Deno.serve(async (req) => {
 
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceKey = Deno.env.get("SERVICE_ROLE_KEY")!;
+    // Auto-provided by Supabase. Prefer the new secret-key model, fall back to legacy.
+    const secretKeysEnv = Deno.env.get("SUPABASE_SECRET_KEYS");
+    const serviceKey = secretKeysEnv
+      ? (JSON.parse(secretKeysEnv) as Record<string, string>).default
+      : Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const admin = createClient(supabaseUrl, serviceKey, {
       auth: { autoRefreshToken: false, persistSession: false },
     });
