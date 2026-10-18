@@ -4,8 +4,8 @@ import { AlertTriangle, Pencil } from "lucide-react";
 import DeleteProduct from "@/components/DeleteProduct";
 import StockAdjust from "@/components/StockAdjust";
 import TransferForm from "@/components/TransferForm";
+import { getProfile } from "@/lib/auth";
 import { createServerSupabase } from "@/lib/supabase/server";
-import { getRole } from "@/lib/auth";
 import { idr, inventoryRows, timeAgo, toProductRow, validMovements } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -14,11 +14,12 @@ const DAY = 24 * 60 * 60 * 1000;
 
 export default async function DetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  const isAdmin = (await getRole()) === "admin";
+  const profile = await getProfile();
+  const isOwner = profile.role === "owner";
   const supabase = await createServerSupabase();
   const { data: raw } = await supabase
     .from("master_products")
-    .select("id, plu_code, name, category, price, min_stock, inventory(current_qty, location)")
+    .select("id, plu_code, name, category, price, min_stock, inventory(current_qty, store_id, stores(name))")
     .eq("id", id)
     .maybeSingle();
   if (!raw) notFound();
@@ -52,7 +53,7 @@ export default async function DetailPage({ params }: { params: Promise<{ id: str
           <p className="text-xs font-medium text-slate-600">{p.plu_code} • {p.category ?? "-"}</p>
           <h1 className="text-xl">{p.name}</h1>
         </div>
-        {isAdmin && (
+        {isOwner && (
           <Link
             href={`/produk/${p.id}/edit`}
             className="flex h-11 shrink-0 items-center gap-1 rounded-lg border-2 border-slate-900 bg-white px-3 text-sm font-bold shadow-[2px_2px_0_0_#0f172a] transition-all active:translate-x-[2px] active:translate-y-[2px] active:shadow-none"
@@ -84,8 +85,22 @@ export default async function DetailPage({ params }: { params: Promise<{ id: str
         ))}
       </div>
 
-      <StockAdjust productId={p.id} locations={locs.map((r) => r.location)} />
-      {locs.length > 0 && <TransferForm productId={p.id} locations={locs.map((r) => r.location)} />}
+      <StockAdjust
+        productId={p.id}
+        stores={locs
+          .filter((r) => r.storeId)
+          .map((r) => ({ id: r.storeId as string, name: r.location, code: "", address: null, is_active: true }))}
+        role={profile.role ?? "kasir"}
+        defaultStoreId={profile.storeId}
+      />
+      {locs.length > 0 && (
+        <TransferForm
+          productId={p.id}
+          stores={locs
+            .filter((r) => r.storeId)
+            .map((r) => ({ id: r.storeId as string, name: r.location, code: "", address: null, is_active: true }))}
+        />
+      )}
 
       <section className="mt-6">
         <h2 className="text-base">Tren 14 hari</h2>
@@ -127,7 +142,7 @@ export default async function DetailPage({ params }: { params: Promise<{ id: str
         </div>
       </section>
 
-      {isAdmin && (
+      {isOwner && (
         <div className="mt-6">
           <DeleteProduct id={p.id} name={p.name} />
         </div>

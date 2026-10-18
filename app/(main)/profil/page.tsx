@@ -1,6 +1,6 @@
 import LogoutButton from "@/components/LogoutButton";
 import { createServerSupabase } from "@/lib/supabase/server";
-import { getRole } from "@/lib/auth";
+import { getProfile } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
@@ -8,8 +8,11 @@ export default async function ProfilPage() {
   const supabase = await createServerSupabase();
   const { data } = await supabase.auth.getUser();
   const email = data.user?.email ?? "-";
-  const role = await getRole();
-  const initial = email.charAt(0).toUpperCase();
+  const profile = await getProfile();
+  const initial = (profile.fullName ?? profile.username ?? email).charAt(0).toUpperCase();
+
+  const roleLabel = profile.role === "owner" ? "Owner" : profile.role === "kasir" ? "Kasir" : "Belum aktif";
+  const roleBg = profile.role === "owner" ? "bg-amber-400" : "bg-white";
 
   return (
     <main className="p-4 text-slate-900">
@@ -21,13 +24,12 @@ export default async function ProfilPage() {
           {initial}
         </span>
         <div className="min-w-0">
-          <p className="truncate font-bold">{email}</p>
+          <p className="truncate font-bold">{profile.username || email}</p>
+          <p className="truncate text-xs text-slate-600">{email}</p>
           <span
-            className={`mt-1 inline-block rounded-full border-2 border-slate-900 px-2 py-0.5 text-[11px] font-bold ${
-              role === "admin" ? "bg-amber-400" : "bg-white"
-            }`}
+            className={`mt-1 inline-block rounded-full border-2 border-slate-900 px-2 py-0.5 text-[11px] font-bold ${roleBg}`}
           >
-            {role === "admin" ? "Admin" : "Kasir"}
+            {roleLabel}
           </span>
         </div>
       </div>

@@ -18,7 +18,45 @@ export type MovementRow = {
   product_name: string;
 };
 
-type RawInventory = { current_qty: number; location: string } | null;
+export type StoreRow = {
+  id: string;
+  name: string;
+  code: string;
+  address: string | null;
+  is_active: boolean;
+};
+
+export type ProfileRow = {
+  user_id: string;
+  username: string;
+  full_name: string | null;
+  role: "owner" | "kasir";
+  store_id: string | null;
+  is_active: boolean;
+};
+
+export type StockRequestRow = {
+  id: string;
+  product_id: string;
+  store_id: string;
+  request_type: string;
+  requested_delta: number;
+  reason: string | null;
+  status: "pending" | "approved" | "rejected";
+  requested_by: string;
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  review_note: string | null;
+  created_at: string;
+};
+
+type RawStore = { name: string } | { name: string }[] | null;
+
+type RawInventory = {
+  current_qty: number;
+  store_id: string | null;
+  stores: RawStore;
+} | null;
 
 type RawProduct = {
   id: string;
@@ -39,11 +77,16 @@ type RawMovement = {
   master_products: { name: string } | { name: string }[] | null;
 };
 
+const asArray = <T>(v: T | T[] | null | undefined): T[] =>
+  v === null || v === undefined ? [] : Array.isArray(v) ? v : [v];
+
+const storeName = (s: RawStore): string | null => asArray(s)[0]?.name ?? null;
+
 export function toProductRow(p: RawProduct): ProductRow {
-  const rows = (Array.isArray(p.inventory) ? p.inventory : [p.inventory]).filter(
+  const rows = asArray(p.inventory).filter(
     (r): r is Exclude<RawInventory, null> => r !== null
   );
-  const locs = [...new Set(rows.map((r) => r.location))];
+  const locs = [...new Set(rows.map((r) => storeName(r.stores)).filter((n): n is string => n !== null))];
   return {
     id: p.id,
     plu_code: p.plu_code,
@@ -56,11 +99,19 @@ export function toProductRow(p: RawProduct): ProductRow {
   };
 }
 
-export function inventoryRows(p: RawProduct): { location: string; current_qty: number }[] {
-  const rows = (Array.isArray(p.inventory) ? p.inventory : [p.inventory]).filter(
+export function inventoryRows(p: RawProduct): {
+  location: string;
+  storeId: string | null;
+  current_qty: number;
+}[] {
+  const rows = asArray(p.inventory).filter(
     (r): r is Exclude<RawInventory, null> => r !== null
   );
-  return rows.map((r) => ({ location: r.location, current_qty: r.current_qty }));
+  return rows.map((r) => ({
+    location: storeName(r.stores) ?? "-",
+    storeId: r.store_id,
+    current_qty: r.current_qty,
+  }));
 }
 
 export function toMovementRow(m: RawMovement): MovementRow | null {

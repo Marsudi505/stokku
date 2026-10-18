@@ -35,7 +35,7 @@ export default function ScanPage() {
       const supabase = createClient();
       const { data, error } = await supabase
         .from("master_products")
-        .select("id, plu_code, name, category, price, min_stock, inventory(current_qty, location)")
+        .select("id, plu_code, name, category, price, min_stock, inventory(current_qty, store_id, stores(name))")
         .eq("plu_code", c)
         .maybeSingle();
       if (error) throw error;

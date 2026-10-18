@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import ProductCard from "@/components/ProductCard";
 import ProductSearch from "@/components/ProductSearch";
 import { createServerSupabase } from "@/lib/supabase/server";
-import { getRole } from "@/lib/auth";
+import { getProfile } from "@/lib/auth";
 import { toProductRow } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
@@ -17,12 +17,12 @@ export default async function ProdukPage({
   const { q = "", page = "1" } = await searchParams;
   const query = q.trim().replace(/[%_,()]/g, "").slice(0, 50);
   const current = Math.max(1, parseInt(page, 10) || 1);
-  const isAdmin = (await getRole()) === "admin";
+  const isOwner = (await getProfile()).role === "owner";
   const supabase = await createServerSupabase();
 
   let req = supabase
     .from("master_products")
-    .select("id, plu_code, name, category, price, min_stock, inventory(current_qty, location)", {
+    .select("id, plu_code, name, category, price, min_stock, inventory(current_qty, store_id, stores(name))", {
       count: "exact",
     })
     .order("name");
@@ -68,7 +68,7 @@ export default async function ProdukPage({
           ) : <div />}
         </div>
       )}
-      {isAdmin && (
+      {isOwner && (
         <Link
           href="/produk/tambah"
           aria-label="Tambah produk"

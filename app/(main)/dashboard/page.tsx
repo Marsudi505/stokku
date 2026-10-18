@@ -9,7 +9,7 @@ export default async function DashboardPage() {
   const supabase = await createServerSupabase();
   const { data: rawProducts } = await supabase
     .from("master_products")
-    .select("id, plu_code, name, category, price, min_stock, inventory(current_qty, location)")
+    .select("id, plu_code, name, category, price, min_stock, inventory(current_qty, store_id, stores(name))")
     .order("name");
   const products = (rawProducts ?? []).map(toProductRow);
   const restock = products.filter((p) => p.current_qty <= p.min_stock);

@@ -1,8 +1,10 @@
 "use server";
+
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createServerSupabase } from "./supabase/server";
-import { getRole } from "./auth";
+import { getProfile, requireAuth } from "./auth";
+import { assertOwner } from "./permissions";
 
 type ActionResult = { error?: string; ok?: string };
 
@@ -11,20 +13,24 @@ function revalidateStock(paths: string[] = []) {
 }
 
 export async function addProduct(_prev: ActionResult, form: FormData): Promise<ActionResult> {
-  if ((await getRole()) !== "admin") return { error: "Hanya admin yang boleh menambah produk." };
+  const profile = await getProfile();
+  const guard = assertOwner(profile);
+  if (guard) return { error: guard };
+
+  const supabase = await createServerSupabase();
   const plu = String(form.get("plu_code") ?? "").trim();
   const name = String(form.get("name") ?? "").trim();
   const category = String(form.get("category") ?? "").trim() || null;
-  const location = String(form.get("location") ?? "").trim() || "Utama";
+  const storeId = String(form.get("store_id") ?? "").trim();
   const price = Math.max(0, Math.floor(Number(form.get("price") ?? 0)));
   const minStock = Math.max(0, Math.floor(Number(form.get("min_stock") ?? 5)));
   const qty = Math.max(0, Math.floor(Number(form.get("qty") ?? 0)));
 
   if (!plu || !name) return { error: "PLU dan nama wajib diisi." };
+  if (!storeId) return { error: "Cabang wajib dipilih." };
   if (!Number.isFinite(price) || !Number.isFinite(minStock) || !Number.isFinite(qty))
     return { error: "Harga, min. stok, dan stok awal harus angka." };
 
-  const supabase = await createServerSupabase();
   const { data: prod, error: e1 } = await supabase
     .from("master_products")
     .insert({ plu_code: plu, name, category, price, min_stock: minStock })
@@ -37,7 +43,7 @@ export async function addProduct(_prev: ActionResult, form: FormData): Promise<A
 
   const { error: e2 } = await supabase
     .from("inventory")
-    .insert({ product_id: prod.id, current_qty: 0, location });
+    .insert({ product_id: prod.id, current_qty: 0, store_id: storeId });
   if (e2) {
     await supabase.from("master_products").delete().eq("id", prod.id);
     return { error: "Gagal menyimpan stok awal." };
@@ -49,11 +55,11 @@ export async function addProduct(_prev: ActionResult, form: FormData): Promise<A
       delta: qty,
       mtype: "IN",
       reason: "Stok awal",
-      p_loc: location,
+      p_store: storeId,
     });
     if (e3) {
       await supabase.from("master_products").delete().eq("id", prod.id);
-      return { error: "Gagal mencatat stok awal." };
+      return { error: `Gagal mencatat stok awal: ${e3.message}` };
     }
   }
 
@@ -62,7 +68,10 @@ export async function addProduct(_prev: ActionResult, form: FormData): Promise<A
 }
 
 export async function updateProduct(_prev: ActionResult, form: FormData): Promise<ActionResult> {
-  if ((await getRole()) !== "admin") return { error: "Hanya admin yang boleh mengubah produk." };
+  const profile = await getProfile();
+  const guard = assertOwner(profile);
+  if (guard) return { error: guard };
+
   const id = String(form.get("id") ?? "");
   const plu = String(form.get("plu_code") ?? "").trim();
   const name = String(form.get("name") ?? "").trim();
@@ -88,7 +97,8 @@ export async function updateProduct(_prev: ActionResult, form: FormData): Promis
 }
 
 export async function deleteProduct(form: FormData): Promise<void> {
-  if ((await getRole()) !== "admin") throw new Error("Hanya admin.");
+  const profile = await getProfile();
+  if (assertOwner(profile)) throw new Error("Hanya owner.");
   const id = String(form.get("id") ?? "");
   if (!id) throw new Error("Produk tidak valid.");
   const supabase = await createServerSupabase();
@@ -99,105 +109,152 @@ export async function deleteProduct(form: FormData): Promise<void> {
 }
 
 export async function adjustStock(_prev: ActionResult, form: FormData): Promise<ActionResult> {
-  const productId = String(form.get("product_id") ?? "");
+  await requireAuth();
+  const profile = await getProfile();
+  const product_id = String(form.get("product_id") ?? "");
+  const p_store = String(form.get("store_id") ?? "");
   const kind = String(form.get("kind") ?? "");
-  const location = String(form.get("location") ?? "").trim() || "Utama";
   const qty = Math.floor(Number(form.get("qty") ?? 0));
   const reason =
     String(form.get("reason") ?? "").trim() || (kind === "IN" ? "Stok masuk" : "Stok keluar");
 
-  if (!productId) return { error: "Produk tidak valid." };
+  if (!product_id || !p_store) return { error: "Produk dan cabang wajib diisi." };
   if (!Number.isFinite(qty) || qty <= 0) return { error: "Jumlah harus lebih dari 0." };
   if (kind !== "IN" && kind !== "OUT") return { error: "Tipe mutasi tidak valid." };
+  if (profile.role !== "owner" && profile.storeId !== p_store)
+    return { error: "Hanya bisa di cabang Anda sendiri." };
 
   const supabase = await createServerSupabase();
-  if (kind === "OUT") {
-    const { data: inv } = await supabase
-      .from("inventory")
-      .select("current_qty")
-      .eq("product_id", productId)
-      .eq("location", location)
-      .maybeSingle();
-    const cur = inv?.current_qty ?? 0;
-    if (qty > cur) return { error: `Stok ${location} tidak cukup (sisa ${cur}).` };
-  }
-
   const { error } = await supabase.rpc("adjust_stock", {
-    p_id: productId,
+    p_id: product_id,
     delta: kind === "IN" ? qty : -qty,
     mtype: kind,
     reason,
-    p_loc: location,
+    p_store,
   });
-  if (error) return { error: "Gagal mencatat mutasi." };
+  if (error) return { error: error.message };
 
-  revalidateStock([`/produk/${productId}`]);
-  return { ok: `Berhasil: ${kind === "IN" ? "+" : "−"}${qty} @ ${location}.` };
+  revalidateStock([`/produk/${product_id}`]);
+  return { ok: `Berhasil: ${kind === "IN" ? "+" : "−"}${qty}.` };
+}
+
+export async function requestStockChange(_prev: ActionResult, form: FormData): Promise<ActionResult> {
+  await requireAuth();
+  const profile = await getProfile();
+  const product_id = String(form.get("product_id") ?? "");
+  const p_store = String(form.get("store_id") ?? profile.storeId ?? "");
+  const delta = Math.floor(Number(form.get("delta") ?? 0));
+  const reason = String(form.get("reason") ?? "").trim();
+
+  if (!product_id || !p_store) return { error: "Produk dan cabang wajib diisi." };
+  if (!delta || !Number.isFinite(delta)) return { error: "Selisih harus angka selain 0." };
+  if (!reason) return { error: "Alasan wajib diisi." };
+  if (profile.role !== "owner" && profile.storeId !== p_store)
+    return { error: "Hanya bisa di cabang Anda sendiri." };
+
+  const supabase = await createServerSupabase();
+  const { error } = await supabase.rpc("request_stock_change", {
+    p_id: product_id,
+    delta,
+    p_type: "ADJUSTMENT",
+    reason,
+    p_store,
+  });
+  if (error) return { error: error.message };
+
+  revalidatePath("/permintaan");
+  return { ok: "Pengajuan terkirim. Menunggu persetujuan owner." };
+}
+
+export async function approveRequest(reqId: string): Promise<ActionResult> {
+  const profile = await getProfile();
+  if (assertOwner(profile)) return { error: "Hanya owner." };
+
+  const supabase = await createServerSupabase();
+  const { error } = await supabase.rpc("review_stock_request", {
+    req_id: reqId,
+    approve: true,
+    note: null,
+  });
+  if (error) return { error: error.message };
+
+  revalidatePath("/permintaan");
+  revalidateStock();
+  return { ok: "Disetujui. Stok sudah diperbarui." };
+}
+
+export async function rejectRequest(reqId: string, note?: string): Promise<ActionResult> {
+  const profile = await getProfile();
+  if (assertOwner(profile)) return { error: "Hanya owner." };
+
+  const supabase = await createServerSupabase();
+  const { error } = await supabase.rpc("review_stock_request", {
+    req_id: reqId,
+    approve: false,
+    note: note ?? null,
+  });
+  if (error) return { error: error.message };
+
+  revalidatePath("/permintaan");
+  return { ok: "Ditolak." };
 }
 
 export async function transferStock(_prev: ActionResult, form: FormData): Promise<ActionResult> {
-  const productId = String(form.get("product_id") ?? "");
-  const fromLoc = String(form.get("from_loc") ?? "").trim();
-  const toLoc = String(form.get("to_loc") ?? "").trim();
-  const qty = Math.floor(Number(form.get("qty") ?? 0));
-  const reason = String(form.get("reason") ?? "").trim() || "Transfer lokasi";
+  const profile = await getProfile();
+  if (assertOwner(profile)) return { error: "Hanya owner." };
 
-  if (!productId || !fromLoc || !toLoc) return { error: "Lokasi asal dan tujuan wajib diisi." };
-  if (fromLoc === toLoc) return { error: "Lokasi asal dan tujuan harus berbeda." };
+  const product_id = String(form.get("product_id") ?? "");
+  const from_loc = String(form.get("from_loc") ?? "");
+  const to_loc = String(form.get("to_loc") ?? "");
+  const qty = Math.floor(Number(form.get("qty") ?? 0));
+  const reason = String(form.get("reason") ?? "").trim() || "Transfer antar cabang";
+
+  if (!product_id || !from_loc || !to_loc) return { error: "Cabang asal dan tujuan wajib diisi." };
+  if (from_loc === to_loc) return { error: "Cabang asal dan tujuan harus berbeda." };
   if (!Number.isFinite(qty) || qty <= 0) return { error: "Jumlah harus lebih dari 0." };
 
   const supabase = await createServerSupabase();
   const { error } = await supabase.rpc("transfer_stock", {
-    p_id: productId,
-    from_loc: fromLoc,
-    to_loc: toLoc,
+    p_id: product_id,
+    from_loc,
+    to_loc,
     qty,
     reason,
   });
-  if (error) return { error: "Gagal transfer (stok tidak cukup?)." };
+  if (error) return { error: error.message };
 
-  revalidateStock([`/produk/${productId}`]);
-  return { ok: `Pindah ${qty} dari ${fromLoc} ke ${toLoc}.` };
+  revalidateStock([`/produk/${product_id}`]);
+  return { ok: `Pindah ${qty} unit antar cabang.` };
 }
 
-type OpnameItem = { id: string; loc: string; counted: number };
-
 export async function submitOpname(_prev: ActionResult, form: FormData): Promise<ActionResult> {
-  let items: OpnameItem[];
+  await requireAuth();
+  const profile = await getProfile();
+  const p_store = String(form.get("store_id") ?? profile.storeId ?? "");
+
+  let items: { id: string; counted: number }[];
   try {
-    items = JSON.parse(String(form.get("items") ?? "[]")) as OpnameItem[];
+    items = JSON.parse(String(form.get("items") ?? "[]")) as { id: string; counted: number }[];
   } catch {
     return { error: "Data opname tidak valid." };
   }
   const clean = items.filter(
-    (it) => it && typeof it.id === "string" && typeof it.loc === "string" && Number.isFinite(it.counted) && it.counted >= 0
+    (it) => it && typeof it.id === "string" && Number.isFinite(it.counted) && it.counted >= 0
   );
   if (clean.length === 0) return { error: "Tidak ada baris opname." };
+  if (!p_store) return { error: "Cabang belum ditentukan." };
+  if (profile.role !== "owner" && profile.storeId !== p_store)
+    return { error: "Hanya bisa di cabang Anda sendiri." };
 
   const supabase = await createServerSupabase();
-  const ids = [...new Set(clean.map((it) => it.id))];
-  const { data: inv } = await supabase
-    .from("inventory")
-    .select("product_id, location, current_qty")
-    .in("product_id", ids);
-  const current = new Map((inv ?? []).map((r) => [`${r.product_id}::${r.location}`, r.current_qty]));
-
-  let changed = 0;
-  for (const it of clean) {
-    const sys = current.get(`${it.id}::${it.loc}`) ?? 0;
-    const diff = Math.floor(it.counted) - sys;
-    if (diff === 0) continue;
-    const { error } = await supabase.rpc("adjust_stock", {
-      p_id: it.id,
-      delta: diff,
-      mtype: "ADJUSTMENT",
-      reason: "Opname",
-      p_loc: it.loc,
-    });
-    if (error) return { error: `Gagal mencatat selisih (${it.loc}).` };
-    changed++;
-  }
+  const { error } = await supabase.rpc("submit_opname_batch", {
+    items: clean,
+    p_store,
+  });
+  if (error) return { error: error.message };
 
   revalidateStock();
-  return { ok: changed === 0 ? "Tidak ada selisih. Stok akurat!" : `${changed} baris disesuaikan.` };
+  return profile.role === "owner"
+    ? { ok: "Opname diterapkan ke stok." }
+    : { ok: "Opname dikirim. Menunggu persetujuan owner." };
 }

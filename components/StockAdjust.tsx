@@ -1,7 +1,8 @@
 "use client";
 import { useActionState, useState } from "react";
 import { Minus, Plus } from "lucide-react";
-import { adjustStock } from "@/lib/actions";
+import { adjustStock, requestStockChange } from "@/lib/actions";
+import type { StoreRow } from "@/lib/types";
 
 const field =
   "h-12 rounded-lg border-2 border-slate-900 bg-white px-4 text-sm font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-pink-400";
@@ -10,22 +11,56 @@ const submitPink =
 
 export default function StockAdjust({
   productId,
-  locations,
+  stores,
+  role,
+  defaultStoreId,
 }: {
   productId: string;
-  locations: string[];
+  stores: StoreRow[];
+  role: "owner" | "kasir";
+  defaultStoreId: string | null;
 }) {
   const [kind, setKind] = useState<"IN" | "OUT">("IN");
-  const [state, action, pending] = useActionState(adjustStock, {});
+  const [storePick, setStorePick] = useState(defaultStoreId ?? stores[0]?.id ?? "");
+  const [adjustState, adjustAction, adjustPending] = useActionState(adjustStock, {});
+  const [reqState, reqAction, reqPending] = useActionState(requestStockChange, {});
+
   const base =
     "flex h-12 items-center justify-center gap-1 rounded-lg border-2 border-slate-900 font-bold transition-all";
   const on = "shadow-[2px_2px_0_0_#0f172a]";
   const off = "bg-white text-slate-900";
 
+  if (role === "kasir") {
+    return (
+      <form
+        action={reqAction}
+        className="mt-4 rounded-xl border-2 border-slate-900 bg-white p-4 text-slate-900 shadow-[4px_4px_0_0_#0f172a]"
+      >
+        <input type="hidden" name="product_id" value={productId} />
+        <input type="hidden" name="store_id" value={storePick} />
+        <p className="font-bold">Ajukan penyesuaian stok</p>
+        <p className="mt-1 text-xs text-slate-600">Menunggu persetujuan owner.</p>
+        <div className="mt-3 grid grid-cols-[1fr_2fr] gap-2">
+          <input name="delta" type="number" defaultValue={1} required className={field} placeholder="± selisih" />
+          <input name="reason" required placeholder="cth: rusak, hilang" className={field} />
+        </div>
+        {reqState?.error && <p className="mt-2 text-sm font-bold text-red-600">{reqState.error}</p>}
+        {reqState?.ok && <p className="mt-2 text-sm font-bold text-slate-900">{reqState.ok}</p>}
+        <button type="submit" disabled={reqPending} className={submitPink}>
+          {reqPending ? "Mengirim..." : "Ajukan"}
+        </button>
+      </form>
+    );
+  }
+
   return (
-    <form action={action} className="mt-4 rounded-xl border-2 border-slate-900 bg-white p-4 text-slate-900 shadow-[4px_4px_0_0_#0f172a]">
+    <form
+      action={adjustAction}
+      className="mt-4 rounded-xl border-2 border-slate-900 bg-white p-4 text-slate-900 shadow-[4px_4px_0_0_#0f172a]"
+    >
       <input type="hidden" name="product_id" value={productId} />
       <input type="hidden" name="kind" value={kind} />
+      <input type="hidden" name="store_id" value={storePick} />
       <div className="grid grid-cols-2 gap-2">
         <button
           type="button"
@@ -43,19 +78,19 @@ export default function StockAdjust({
         </button>
       </div>
       <label className="mt-3 flex flex-col gap-1 text-xs font-bold">
-        Lokasi (bisa ketik baru)
-        <input
-          name="location"
-          list="stokku-locs"
-          defaultValue={locations[0] ?? "Utama"}
-          required
+        Cabang
+        <select
+          name="store_id"
+          value={storePick}
+          onChange={(e) => setStorePick(e.target.value)}
           className={field}
-        />
-        <datalist id="stokku-locs">
-          {locations.map((l) => (
-            <option key={l} value={l} />
+        >
+          {stores.map((s) => (
+            <option key={s.id} value={s.id}>
+              {s.name}
+            </option>
           ))}
-        </datalist>
+        </select>
       </label>
       <div className="mt-3 grid grid-cols-[1fr_2fr] gap-2">
         <input name="qty" type="number" min={1} defaultValue={1} required className={field} />
@@ -65,10 +100,10 @@ export default function StockAdjust({
           className={field}
         />
       </div>
-      {state?.error && <p className="mt-2 text-sm font-bold text-red-600">{state.error}</p>}
-      {state?.ok && <p className="mt-2 text-sm font-bold text-slate-900">{state.ok}</p>}
-      <button type="submit" disabled={pending} className={submitPink}>
-        {pending ? "Menyimpan..." : "Catat mutasi"}
+      {adjustState?.error && <p className="mt-2 text-sm font-bold text-red-600">{adjustState.error}</p>}
+      {adjustState?.ok && <p className="mt-2 text-sm font-bold text-slate-900">{adjustState.ok}</p>}
+      <button type="submit" disabled={adjustPending} className={submitPink}>
+        {adjustPending ? "Menyimpan..." : "Catat mutasi"}
       </button>
     </form>
   );

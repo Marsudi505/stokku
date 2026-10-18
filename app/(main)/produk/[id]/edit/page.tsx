@@ -1,12 +1,12 @@
 import { notFound, redirect } from "next/navigation";
 import EditForm from "@/components/EditForm";
 import { createServerSupabase } from "@/lib/supabase/server";
-import { getRole } from "@/lib/auth";
+import { getProfile } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export default async function EditPage({ params }: { params: Promise<{ id: string }> }) {
-  if ((await getRole()) !== "admin") redirect("/produk");
+  if ((await getProfile()).role !== "owner") redirect("/produk");
   const { id } = await params;
   const supabase = await createServerSupabase();
   const { data } = await supabase
