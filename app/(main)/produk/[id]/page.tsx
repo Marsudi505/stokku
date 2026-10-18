@@ -6,7 +6,7 @@ import StockAdjust from "@/components/StockAdjust";
 import TransferForm from "@/components/TransferForm";
 import { getProfile } from "@/lib/auth";
 import { createServerSupabase } from "@/lib/supabase/server";
-import { idr, inventoryRows, timeAgo, toProductRow, validMovements } from "@/lib/types";
+import { idr, inventoryRows, timeAgo, toProductRow, validMovements, type StoreRow } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -26,6 +26,13 @@ export default async function DetailPage({ params }: { params: Promise<{ id: str
   const p = toProductRow(raw);
   const locs = inventoryRows(raw);
   const critical = p.current_qty <= p.min_stock;
+
+  const { data: storeRows } = await supabase
+    .from("stores")
+    .select("id, name, code, address, is_active")
+    .eq("is_active", true)
+    .order("name");
+  const stores = (storeRows ?? []) as StoreRow[];
 
   const { data: rawMov } = await supabase
     .from("stock_movements")
@@ -85,21 +92,16 @@ export default async function DetailPage({ params }: { params: Promise<{ id: str
         ))}
       </div>
 
-      <StockAdjust
-        productId={p.id}
-        stores={locs
-          .filter((r) => r.storeId)
-          .map((r) => ({ id: r.storeId as string, name: r.location, code: "", address: null, is_active: true }))}
-        role={profile.role ?? "kasir"}
-        defaultStoreId={profile.storeId}
-      />
-      {locs.length > 0 && (
-        <TransferForm
+      {profile.role && (
+        <StockAdjust
           productId={p.id}
-          stores={locs
-            .filter((r) => r.storeId)
-            .map((r) => ({ id: r.storeId as string, name: r.location, code: "", address: null, is_active: true }))}
+          stores={stores}
+          role={profile.role}
+          defaultStoreId={profile.storeId}
         />
+      )}
+      {isOwner && stores.length > 0 && (
+        <TransferForm productId={p.id} stores={stores} />
       )}
 
       <section className="mt-6">
