@@ -1,7 +1,15 @@
 "use client";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { CircleUserRound, FileText, Home, Package, ScanLine, type LucideIcon } from "lucide-react";
+import {
+  CircleUserRound,
+  ClipboardList,
+  FileText,
+  Home,
+  Package,
+  ScanLine,
+  type LucideIcon,
+} from "lucide-react";
 
 type Tab = { name: string; path: string; icon: LucideIcon };
 
@@ -13,6 +21,7 @@ const rightTabs: Tab[] = [
   { name: "Laporan", path: "/laporan", icon: FileText },
   { name: "Profil", path: "/profil", icon: CircleUserRound },
 ];
+const ownerTab: Tab = { name: "Permintaan", path: "/permintaan", icon: ClipboardList };
 
 function TabItem({ t, active, badge }: { t: Tab; active: boolean; badge?: number }) {
   const Icon = t.icon;
@@ -34,11 +43,20 @@ function TabItem({ t, active, badge }: { t: Tab; active: boolean; badge?: number
   );
 }
 
-export default function BottomNav({ criticalCount = 0 }: { criticalCount?: number }) {
+export default function BottomNav({
+  criticalCount = 0,
+  pendingCount = 0,
+  isOwner = false,
+}: {
+  criticalCount?: number;
+  pendingCount?: number;
+  isOwner?: boolean;
+}) {
   const pathname = usePathname();
+  const cols = isOwner ? "grid-cols-6" : "grid-cols-5";
   return (
     <nav className="fixed inset-x-0 bottom-0 z-50 border-t-2 border-slate-900 bg-white pb-safe">
-      <div className="mx-auto grid max-w-md grid-cols-5 items-end px-2 pt-1 pb-2">
+      <div className={`mx-auto grid ${cols} max-w-md items-end px-2 pt-1 pb-2`}>
         {leftTabs.map((t) => (
           <TabItem
             key={t.path}
@@ -53,6 +71,13 @@ export default function BottomNav({ criticalCount = 0 }: { criticalCount?: numbe
           </span>
           <span className="-mt-3">Scan</span>
         </Link>
+        {isOwner && (
+          <TabItem
+            t={ownerTab}
+            active={pathname.startsWith(ownerTab.path)}
+            badge={pendingCount}
+          />
+        )}
         {rightTabs.map((t) => (
           <TabItem key={t.path} t={t} active={pathname.startsWith(t.path)} />
         ))}
