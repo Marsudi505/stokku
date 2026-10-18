@@ -1,24 +1,40 @@
 import Link from "next/link";
 import { AlertTriangle, ArrowDownRight, ArrowUpRight, ClipboardCheck, PencilLine } from "lucide-react";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { getProfile } from "@/lib/auth";
+import { cookies } from "next/headers";
 import { idr, timeAgo, toProductRow, validMovements } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
   const supabase = await createServerSupabase();
-  const { data: rawProducts } = await supabase
+  const profile = await getProfile();
+  const activeStoreCookie = (await cookies()).get("active_store")?.value ?? null;
+  const scopeStore =
+    profile.role === "kasir" ? profile.storeId : activeStoreCookie;
+
+  let prodQuery = supabase
     .from("master_products")
     .select("id, plu_code, name, category, price, min_stock, inventory(current_qty, store_id, stores(name))")
     .order("name");
-  const products = (rawProducts ?? []).map(toProductRow);
-  const restock = products.filter((p) => p.current_qty <= p.min_stock);
 
-  const { data: rawMov } = await supabase
+  let movQuery = supabase
     .from("stock_movements")
     .select("id, movement_type, qty_change, reason, created_at, master_products(name)")
     .order("created_at", { ascending: false })
     .limit(5);
+
+  if (scopeStore) {
+    prodQuery = prodQuery.eq("inventory.store_id", scopeStore);
+    movQuery = movQuery.eq("store_id", scopeStore);
+  }
+
+  const { data: rawProducts } = await prodQuery;
+  const { data: rawMov } = await movQuery;
+
+  const products = (rawProducts ?? []).map(toProductRow);
+  const restock = products.filter((p) => p.current_qty <= p.min_stock);
   const movements = validMovements(rawMov ?? []);
 
   const iconFor = (t: string) =>

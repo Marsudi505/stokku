@@ -2,6 +2,8 @@ import BackupButton from "@/components/BackupButton";
 import ExportCsv from "@/components/ExportCsv";
 import { timeAgo, validMovements } from "@/lib/types";
 import { createServerSupabase } from "@/lib/supabase/server";
+import { getProfile } from "@/lib/auth";
+import { cookies } from "next/headers";
 
 const field =
   "h-11 rounded-lg border-2 border-slate-900 bg-white px-3 text-sm font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-pink-400";
@@ -15,12 +17,18 @@ export default async function LaporanPage({
 }) {
   const { type = "", from = "", to = "" } = await searchParams;
   const supabase = await createServerSupabase();
+  const profile = await getProfile();
+
+  const activeStoreCookie = (await cookies()).get("active_store")?.value ?? null;
+  const scopeStore =
+    profile.role === "kasir" ? profile.storeId : activeStoreCookie;
 
   let q = supabase
     .from("stock_movements")
     .select("id, movement_type, qty_change, reason, created_at, master_products(name)")
     .order("created_at", { ascending: false })
     .limit(100);
+  if (scopeStore) q = q.eq("store_id", scopeStore);
   if (type === "IN" || type === "OUT" || type === "ADJUSTMENT") q = q.eq("movement_type", type);
   if (from) q = q.gte("created_at", `${from}T00:00:00`);
   if (to) q = q.lte("created_at", `${to}T23:59:59`);
